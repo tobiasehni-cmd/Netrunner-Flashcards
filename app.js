@@ -90,7 +90,6 @@ async function fetchCards() {
         throw new Error(`API returned ${response.status}`);
     }
     const json = await response.json();
-    // v2.0 returns { data: [...], total: N, success: true }
     const allCards = json.data || [];
 
     // Filter to our target sets only
