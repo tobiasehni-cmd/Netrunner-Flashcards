@@ -1,36 +1,19 @@
 // ── Configuration ──────────────────────────────────────
 const API_BASE = "https://netrunnerdb.com/api/2.0/public";
-const TARGET_SETS = [
-    "sg", "system-gateway", 
-    "elev", "elevation", 
-    "vp", "vantage-point"
-];
-const SET_NAMES = {
-    "sg": "System Gateway",
-    "system-gateway": "System Gateway",
-    "elev": "Elevation",
-    "elevation": "Elevation",
-    "vp": "Vantage Point",
-    "vantage-point": "Vantage Point"
-};
-
 const DB_NAME = "netrunner-flashcards";
 const DB_VERSION = 1;
 const STORE_NAME = "cards";
 
-// ── IndexedDB ──────────────────────────────────────────
+// ── IndexedDB Helpers ──────────────────────────────────
 function openDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
-                const store = db.createObjectStore(STORE_NAME, { keyPath: "code" });
-                store.createIndex("set_code", "set_code", { unique: false });
+                db.createObjectStore(STORE_NAME, { keyPath: "code" });
             }
         };
-
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
     });
@@ -40,34 +23,12 @@ async function saveCards(cards) {
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
-
     for (const card of cards) {
-        store.put({
-            code: card.code,
-            title: card.title,
-            text: card.text || "",
-            set_code: card.set_code,
-            side_code: card.side_code || "",
-            faction_code: card.faction_code || "",
-            type_code: card.type_code || ""
-        });
+        store.put(card);
     }
-
     return new Promise((resolve, reject) => {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
-    });
-}
-
-async function getAllCards() {
-    const db = await openDB();
-    const tx = db.transaction(STORE_NAME, "readonly");
-    const store = tx.objectStore(STORE_NAME);
-    const request = store.getAll();
-
-    return new Promise((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
     });
 }
 
@@ -76,27 +37,13 @@ async function getCardCount() {
     const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
     const request = store.count();
-
     return new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
     });
 }
 
-// ── API Fetching ───────────────────────────────────────
-async function fetchCards() {
-    const response = await fetch(`${API_BASE}/cards`);
-    if (!response.ok) {
-        throw new Error(`API returned ${response.status}`);
-    }
-    const json = await response.json();
-    const allCards = json.data || [];
-
-    // Filter to our target sets only
-    return allCards.filter(card => TARGET_SETS.includes(card.set_code));
-}
-
-// ── UI Logic ───────────────────────────────────────────
+// ── UI Elements ────────────────────────────────────────
 const syncBtn = document.getElementById("sync-btn");
 const syncInfo = document.getElementById("sync-info");
 const syncSection = document.getElementById("sync-section");
@@ -112,14 +59,25 @@ const statusDiv = document.getElementById("status");
 let cardList = [];
 let currentIndex = 0;
 
+// ── Main Logic ─────────────────────────────────────────
 async function init() {
+    console.log("App initialized.");
     const count = await getCardCount();
+    console.log("Current card count in DB:", count);
+    
     if (count > 0) {
         syncSection.classList.add("hidden");
         cardSection.classList.remove("hidden");
         statusDiv.textContent = `${count} cards stored locally`;
-        cardList = await getAllCards();
-        showCard(0);
+        // Load cards for display
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => {
+            cardList = req.result;
+            showCard(0);
+        };
     } else {
         syncSection.classList.remove("hidden");
         cardSection.classList.add("hidden");
@@ -127,32 +85,59 @@ async function init() {
 }
 
 syncBtn.addEventListener("click", async () => {
+    console.log("Button clicked. Starting fetch...");
     syncBtn.disabled = true;
     syncBtn.textContent = "Downloading...";
     syncInfo.textContent = "Fetching from NetrunnerDB...";
 
     try {
-        const cards = await fetchCards();
-        syncInfo.textContent = `Got ${cards.length} cards. Saving locally...`;
+        console.log("Fetching from:", API_BASE + "/cards");
+        const response = await fetch(`${API_BASE}/cards`);
+        
+        console.log("Response Status:", response.status);
+        
+        if (!response.ok) {
+            throw new Error(`API returned ${response.status}: ${response.statusText}`);
+        }
 
-        await saveCards(cards);
+        const json = await response.json();
+        console.log("JSON received. Keys:", Object.keys(json));
+        console.log("Total items in 'data'?", json.data ? json.data.length : "No 'data' key");
 
-        syncInfo.textContent = `Saved ${cards.length} cards!`;
-        statusDiv.textContent = `${cards.length} cards stored locally`;
+        if (!json.data || !Array.isArray(json.data)) {
+            throw new Error("Unexpected API format: 'data' array not found");
+        }
 
-        // Switch to card view
-        setTimeout(() => {
-            cardList = cards;
-            syncSection.classList.add("hidden");
-            cardSection.classList.remove("hidden");
-            showCard(0);
-        }, 500);
+        const allCards = json.data;
+        console.log("Raw card count:", allCards.length);
+
+        // DEBUG: Log the FIRST card to see its structure
+        if (allCards.length > 0) {
+            console.log("=== SAMPLE CARD DATA ===");
+            console.log(JSON.stringify(allCards[0], null, 2));
+            console.log("========================");
+        }
+
+        // TEMPORARY FIX: Download ALL cards for now to prove it works
+        // We will filter later once we see the data structure
+        const filteredCards = allCards; 
+        
+        console.log("Saving", filteredCards.length, "cards to IndexedDB...");
+        await saveCards(filteredCards);
+        
+        syncInfo.textContent = `Saved ${filteredCards.length} cards!`;
+        statusDiv.textContent = `${filteredCards.length} cards stored locally`;
+
+        cardList = filteredCards;
+        syncSection.classList.add("hidden");
+        cardSection.classList.remove("hidden");
+        showCard(0);
 
     } catch (err) {
+        console.error("CRITICAL ERROR:", err);
         syncBtn.disabled = false;
         syncBtn.textContent = "Download Cards";
-        syncInfo.textContent = `Error: ${err.message}. Try again.`;
-        console.error(err);
+        syncInfo.textContent = `Error: ${err.message}. Check Console.`;
     }
 });
 
@@ -167,9 +152,14 @@ function showCard(index) {
     }
 
     const card = cardList[index];
-    cardTitle.textContent = card.title;
-    cardSet.textContent = SET_NAMES[card.set_code] || card.set_code;
-    cardText.textContent = card.text;
+    // Try multiple possible field names just in case
+    const title = card.title || "Unknown Title";
+    const setCode = card.set_code || card.pack_code || "Unknown Set";
+    const text = card.text || card.rules_text || card.flavor || "No text";
+
+    cardTitle.textContent = title;
+    cardSet.textContent = setCode.toUpperCase();
+    cardText.textContent = text;
     cardBack.classList.add("hidden");
     revealBtn.classList.remove("hidden");
     cardCounter.textContent = `${index + 1} / ${cardList.length}`;
@@ -180,14 +170,12 @@ revealBtn.addEventListener("click", () => {
     cardBack.classList.remove("hidden");
     revealBtn.textContent = "Next Card";
 
-    // On second tap, advance
     revealBtn.onclick = () => {
         revealBtn.textContent = "Reveal Text";
         revealBtn.onclick = null;
-        // Re-attach original listener for next card
         showCard(currentIndex + 1);
     };
 });
 
-// ── Start ──────────────────────────────────────────────
+// Start
 init();
