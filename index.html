@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Netrunner Flashcards</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>🃏 Netrunner Flashcards</h1>
+            <div id="status"></div>
+        </header>
+
+        <main>
+            <!-- Sync Section -->
+            <section id="sync-section">
+                <button id="sync-btn">Download Cards</button>
+                <p id="sync-info">No cards loaded yet.</p>
+            </section>
+
+            <!-- Card Display -->
+            <section id="card-section" class="hidden">
+                <div id="card-counter"></div>
+                <div id="card-container">
+                    <div id="card-front">
+                        <h2 id="card-title"></h2>
+                        <span id="card-set"></span>
+                    </div>
+                    <div id="card-back" class="hidden">
+                        <div id="card-text"></div>
+                    </div>
+                </div>
+                <button id="reveal-btn">Reveal Text</button>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
