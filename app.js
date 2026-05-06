@@ -1,11 +1,19 @@
 // ── Configuration ──────────────────────────────────────
 const API_BASE = "https://netrunnerdb.com/api/2.0/public";
-const TARGET_SETS = ["sg", "elev", "vp"];
+const TARGET_SETS = [
+    "sg", "system-gateway", 
+    "elev", "elevation", 
+    "vp", "vantage-point"
+];
 const SET_NAMES = {
-    sg: "System Gateway",
-    elev: "Elevation",
-    vp: "Vantage Point"
+    "sg": "System Gateway",
+    "system-gateway": "System Gateway",
+    "elev": "Elevation",
+    "elevation": "Elevation",
+    "vp": "Vantage Point",
+    "vantage-point": "Vantage Point"
 };
+
 const DB_NAME = "netrunner-flashcards";
 const DB_VERSION = 1;
 const STORE_NAME = "cards";
