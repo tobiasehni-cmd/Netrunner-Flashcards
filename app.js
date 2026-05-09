@@ -118,10 +118,11 @@ syncBtn.addEventListener("click", async () => {
             console.log("========================");
         }
 
-        // TEMPORARY FIX: Download ALL cards for now to prove it works
-        // We will filter later once we see the data structure
-        const filteredCards = allCards; 
-        
+        // Filter cards to only System Gateway, Elevation, and Vantage Point
+        // Hardcoded pack_codes: 'sg', 'sge', 'vp'
+        const allowedPackCodes = ["sg", "sge", "vp"];
+        const filteredCards = allCards.filter(card => allowedPackCodes.includes(card.pack_code));
+
         console.log("Saving", filteredCards.length, "cards to IndexedDB...");
         await saveCards(filteredCards);
         
@@ -179,3 +180,4 @@ revealBtn.addEventListener("click", () => {
 
 // Start
 init();
+
