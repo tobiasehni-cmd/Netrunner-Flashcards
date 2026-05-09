@@ -32,13 +32,27 @@ async function saveCards(cards) {
     });
 }
 
-async function getCardCount() {
+async function saveCard(card) {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    store.put(card);
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function getAllCardsDueToday() {
     const db = await openDB();
     const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
-    const request = store.count();
+    const request = store.getAll();
     return new Promise((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+            const today = new Date().toISOString().slice(0, 10);
+            resolve(request.result.filter(card => !card.sm2_nextReview || card.sm2_nextReview <= today));
+        };
         request.onerror = () => reject(request.error);
     });
 }
@@ -55,6 +69,7 @@ const cardBack = document.getElementById("card-back");
 const cardCounter = document.getElementById("card-counter");
 const revealBtn = document.getElementById("reveal-btn");
 const statusDiv = document.getElementById("status");
+const sm2RatingDiv = document.getElementById("sm2-rating");
 
 let cardList = [];
 let currentIndex = 0;
@@ -62,25 +77,19 @@ let currentIndex = 0;
 // ── Main Logic ─────────────────────────────────────────
 async function init() {
     console.log("App initialized.");
-    const count = await getCardCount();
-    console.log("Current card count in DB:", count);
-    
+    cardList = await getAllCardsDueToday();
+    const count = cardList.length;
+    console.log("Current card count for review today:", count);
+
     if (count > 0) {
         syncSection.classList.add("hidden");
         cardSection.classList.remove("hidden");
-        statusDiv.textContent = `${count} cards stored locally`;
-        // Load cards for display
-        const db = await openDB();
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.getAll();
-        req.onsuccess = () => {
-            cardList = req.result;
-            showCard(0);
-        };
+        statusDiv.textContent = `${count} cards scheduled for review today`;
+        showCard(0);
     } else {
         syncSection.classList.remove("hidden");
         cardSection.classList.add("hidden");
+        statusDiv.textContent = `No cards to review today, or not loaded yet.`;
     }
 }
 
@@ -93,9 +102,9 @@ syncBtn.addEventListener("click", async () => {
     try {
         console.log("Fetching from:", API_BASE + "/cards");
         const response = await fetch(`${API_BASE}/cards`);
-        
+
         console.log("Response Status:", response.status);
-        
+
         if (!response.ok) {
             throw new Error(`API returned ${response.status}: ${response.statusText}`);
         }
@@ -108,32 +117,25 @@ syncBtn.addEventListener("click", async () => {
             throw new Error("Unexpected API format: 'data' array not found");
         }
 
-        const allCards = json.data;
-        console.log("Raw card count:", allCards.length);
-
-        // DEBUG: Log the FIRST card to see its structure
-        if (allCards.length > 0) {
-            console.log("=== SAMPLE CARD DATA ===");
-            console.log(JSON.stringify(allCards[0], null, 2));
-            console.log("========================");
-        }
-
-        // Filter cards to only System Gateway, Elevation, and Vantage Point
-        // Hardcoded pack_codes: 'sg', 'sge', 'vp'
         const allowedPackCodes = ["sg", "sge", "vp"];
-        const filteredCards = allCards.filter(card => allowedPackCodes.includes(card.pack_code));
+        const filteredCards = json.data
+            .filter(card => allowedPackCodes.includes(card.pack_code))
+            .map(card => ({
+                ...card,
+                sm2_repetitions: 0,
+                sm2_interval: 1,
+                sm2_easeFactor: 2.5,
+                sm2_nextReview: new Date().toISOString().slice(0, 10)
+            }));
 
         console.log("Saving", filteredCards.length, "cards to IndexedDB...");
         await saveCards(filteredCards);
-        
         syncInfo.textContent = `Saved ${filteredCards.length} cards!`;
         statusDiv.textContent = `${filteredCards.length} cards stored locally`;
-
-        cardList = filteredCards;
         syncSection.classList.add("hidden");
         cardSection.classList.remove("hidden");
+        cardList = filteredCards;
         showCard(0);
-
     } catch (err) {
         console.error("CRITICAL ERROR:", err);
         syncBtn.disabled = false;
@@ -146,9 +148,10 @@ function showCard(index) {
     if (index >= cardList.length) {
         cardTitle.textContent = "End of Stack";
         cardSet.textContent = "";
-        cardText.textContent = "You've browsed all cards. Restart to review again.";
+        cardText.textContent = "You've browsed all cards scheduled for today!";
         cardBack.classList.remove("hidden");
         revealBtn.classList.add("hidden");
+        sm2RatingDiv.classList.add("hidden");
         return;
     }
 
@@ -163,21 +166,61 @@ function showCard(index) {
     cardText.textContent = text;
     cardBack.classList.add("hidden");
     revealBtn.classList.remove("hidden");
+    sm2RatingDiv.classList.add("hidden");
     cardCounter.textContent = `${index + 1} / ${cardList.length}`;
     currentIndex = index;
 }
 
 revealBtn.addEventListener("click", () => {
     cardBack.classList.remove("hidden");
-    revealBtn.textContent = "Next Card";
-
-    revealBtn.onclick = () => {
-        revealBtn.textContent = "Reveal Text";
-        revealBtn.onclick = null;
-        showCard(currentIndex + 1);
-    };
+    revealBtn.classList.add("hidden");
+    sm2RatingDiv.classList.remove("hidden");
 });
+
+sm2RatingDiv.addEventListener('click', async e => {
+    if (!e.target.dataset.q) return;
+    const score = parseInt(e.target.dataset.q, 10);
+    let card = cardList[currentIndex];
+    card = updateSM2(card, score);
+    await saveCard(card);
+    // Remove card from today's review list
+    cardList.splice(currentIndex, 1);
+    if (currentIndex >= cardList.length) currentIndex = 0;
+    showCard(currentIndex);
+});
+
+function updateSM2(card, quality) {
+    // quality: 0-5
+    let {
+        sm2_repetitions,
+        sm2_interval,
+        sm2_easeFactor
+    } = card;
+    if (quality >= 3) {
+        sm2_repetitions = (sm2_repetitions || 0) + 1;
+        if (sm2_repetitions === 1) {
+            sm2_interval = 1;
+        } else if (sm2_repetitions === 2) {
+            sm2_interval = 6;
+        } else {
+            sm2_interval = Math.round(sm2_interval * sm2_easeFactor);
+        }
+    } else {
+        sm2_repetitions = 0;
+        sm2_interval = 1;
+    }
+    sm2_easeFactor = sm2_easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+    if (sm2_easeFactor < 1.3) sm2_easeFactor = 1.3;
+    let nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + sm2_interval);
+    return {
+        ...card,
+        sm2_repetitions,
+        sm2_interval,
+        sm2_easeFactor,
+        sm2_nextReview: nextDate.toISOString().slice(0, 10)
+    };
+}
 
 // Start
 init();
-
